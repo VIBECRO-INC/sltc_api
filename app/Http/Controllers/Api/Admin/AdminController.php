@@ -42,7 +42,7 @@ class AdminController extends Controller
     private array $required = [
         'services' => ['name'],
         'equipment' => ['name', 'category'],
-        'projects' => ['title'],
+        'projects' => ['title', 'project_date'],
         'team' => ['name', 'job_title'],
         'references' => ['name'],
         'products' => ['name'],
@@ -143,14 +143,16 @@ class AdminController extends Controller
         $resource = $request->route('resource');
         $model = $this->model($resource);
         $request->validate($this->rules($resource));
-        $data = $request->only($this->fillable[$resource]);
-        $data = $this->normalize($resource, $data);
+        $data = $this->emptyToNull($this->normalize($resource, $request->only($this->fillable[$resource])));
 
         if (empty($data['slug']) && isset($data['name'])) {
             $data['slug'] = Str::slug($data['name']);
         }
         if (empty($data['slug']) && isset($data['title'])) {
             $data['slug'] = Str::slug($data['title']);
+        }
+        if (!empty($data['slug'])) {
+            $data['slug'] = $this->uniqueSlug($model, $data['slug']);
         }
 
         $item = $model::create($data);
@@ -169,7 +171,11 @@ class AdminController extends Controller
         $model = $this->model($resource);
         $request->validate($this->rules($resource, true));
         $item = $model::findOrFail((int) $request->route('id'));
-        $item->update($this->normalize($resource, $request->only($this->fillable[$resource])));
+        $data = $this->emptyToNull($this->normalize($resource, $request->only($this->fillable[$resource])));
+        if (!empty($data['slug'])) {
+            $data['slug'] = $this->uniqueSlug($model, $data['slug'], $item->id);
+        }
+        $item->update($data);
         return response()->json(['data' => $item->fresh()]);
     }
 
@@ -195,6 +201,23 @@ class AdminController extends Controller
             $data['projects'] = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $data['projects'])), fn ($v) => $v !== ''));
         }
         return $data;
+    }
+
+    private function emptyToNull(array $data): array
+    {
+        return array_map(fn ($v) => $v === '' ? null : $v, $data);
+    }
+
+    private function uniqueSlug(string $model, string $slug, ?int $ignoreId = null): string
+    {
+        $base = $slug;
+        $i = 1;
+        while ($model::where('slug', $slug)
+            ->when($ignoreId, fn ($q) => $q->where('id', '!=', $ignoreId))
+            ->exists()) {
+            $slug = $base.'-'.($i++);
+        }
+        return $slug;
     }
 
     public function upload(Request $request)
