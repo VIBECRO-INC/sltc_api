@@ -156,7 +156,8 @@ class AdminController extends Controller
         }
 
         $item = $model::create($data);
-        return response()->json(['data' => $item], 201);
+        $this->syncPhoto($resource, $item, $request->input('photo'));
+        return response()->json(['data' => $item->refresh()], 201);
     }
 
     public function show(Request $request)
@@ -176,6 +177,7 @@ class AdminController extends Controller
             $data['slug'] = $this->uniqueSlug($model, $data['slug'], $item->id);
         }
         $item->update($data);
+        $this->syncPhoto($resource, $item, $request->input('photo'));
         return response()->json(['data' => $item->fresh()]);
     }
 
@@ -218,6 +220,25 @@ class AdminController extends Controller
             $slug = $base.'-'.($i++);
         }
         return $slug;
+    }
+
+    private function syncPhoto(string $resource, $item, $photo): void
+    {
+        if (! in_array($resource, ['projects', 'equipment', 'services', 'news', 'products', 'gallery'], true)) {
+            return;
+        }
+        $path = trim((string) $photo);
+        if ($path === '') {
+            $item->photos()->delete();
+            return;
+        }
+        $item->photos()->delete();
+        $item->photos()->create([
+            'type' => 'image',
+            'path' => $path,
+            'alt' => $item->title ?? $item->name ?? null,
+            'sort_order' => 0,
+        ]);
     }
 
     public function upload(Request $request)
