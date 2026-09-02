@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Schema;
 use App\Models\{
     Service, Equipment, Project, TeamMember, Reference, Product,
     Article, Testimonial, GalleryItem, Page, QuoteRequest,
@@ -144,15 +145,18 @@ class AdminController extends Controller
         $model = $this->model($resource);
         $request->validate($this->rules($resource));
         $data = $this->emptyToNull($this->normalize($resource, $request->only($this->fillable[$resource])));
+        $data = $this->sanitizeNulls($resource, $data);
 
-        if (empty($data['slug']) && isset($data['name'])) {
-            $data['slug'] = Str::slug($data['name']);
-        }
-        if (empty($data['slug']) && isset($data['title'])) {
-            $data['slug'] = Str::slug($data['title']);
-        }
-        if (!empty($data['slug'])) {
-            $data['slug'] = $this->uniqueSlug($model, $data['slug']);
+        if ($this->hasSlug($model)) {
+            if (empty($data['slug']) && isset($data['name'])) {
+                $data['slug'] = Str::slug($data['name']);
+            }
+            if (empty($data['slug']) && isset($data['title'])) {
+                $data['slug'] = Str::slug($data['title']);
+            }
+            if (!empty($data['slug'])) {
+                $data['slug'] = $this->uniqueSlug($model, $data['slug']);
+            }
         }
 
         $item = $model::create($data);
@@ -173,7 +177,8 @@ class AdminController extends Controller
         $request->validate($this->rules($resource, true));
         $item = $model::findOrFail((int) $request->route('id'));
         $data = $this->emptyToNull($this->normalize($resource, $request->only($this->fillable[$resource])));
-        if (!empty($data['slug'])) {
+        $data = $this->sanitizeNulls($resource, $data);
+        if ($this->hasSlug($model) && !empty($data['slug'])) {
             $data['slug'] = $this->uniqueSlug($model, $data['slug'], $item->id);
         }
         $item->update($data);
@@ -194,6 +199,11 @@ class AdminController extends Controller
         return $this->map[$resource];
     }
 
+    private function hasSlug(string $model): bool
+    {
+        return Schema::hasColumn((new $model)->getTable(), 'slug');
+    }
+
     private function normalize(string $resource, array $data): array
     {
         if ($resource === 'services' && isset($data['features']) && is_string($data['features'])) {
@@ -210,6 +220,19 @@ class AdminController extends Controller
         return array_map(fn ($v) => $v === '' ? null : $v, $data);
     }
 
+    private function sanitizeNulls(string $resource, array $data): array
+    {
+        $table = (new ($this->model($resource)))->getTable();
+        if (!Schema::hasTable($table)) return $data;
+        $columns = collect(Schema::getColumns($table))->keyBy('name');
+        foreach ($data as $key => $value) {
+            if ($value === null && isset($columns[$key]) && !$columns[$key]['nullable']) {
+                unset($data[$key]);
+            }
+        }
+        return $data;
+    }
+
     private function uniqueSlug(string $model, string $slug, ?int $ignoreId = null): string
     {
         $base = $slug;
@@ -224,7 +247,7 @@ class AdminController extends Controller
 
     private function syncPhoto(string $resource, $item, $photo): void
     {
-        if (! in_array($resource, ['projects', 'equipment', 'services', 'news', 'products', 'gallery'], true)) {
+        if (! method_exists($item, 'photos')) {
             return;
         }
         $path = trim((string) $photo);
